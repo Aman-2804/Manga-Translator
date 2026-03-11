@@ -4,7 +4,7 @@ python-multipart
 manga-ocr
 opencv-python
 Pillow
-numpy
+numpy<2
 deep-translator
 torch
 requests
@@ -12,3 +12,7 @@ ultralytics
 huggingface_hub
 anthropic
 langdetect
+segmentation-models-pytorch
+albumentations
+timm
+pytesseract

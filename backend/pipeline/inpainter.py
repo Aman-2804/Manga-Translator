@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -203,23 +203,20 @@ def inpaint_bubble(image: np.ndarray, bubble: dict) -> np.ndarray:
     return result
 
 
-def inpaint_all_bubbles(image_path: str, bubbles: list[dict]) -> np.ndarray:
-    """Sequentially inpaint every bubble in a manga page.
-
-    Each inpainting pass builds on the result of the previous one so
-    overlapping regions are handled correctly.  A debug copy is saved
-    as ``debug_inpainted.png`` next to the source image.
+def inpaint_all_bubbles(
+    image_path: str,
+    bubbles: list[dict],
+    text_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """Inpaint text regions. Uses segmentation mask when available for cleaner results.
 
     Args:
         image_path: Path to the manga page image on disk.
         bubbles:    List of bubble dicts (from the detector / OCR stages).
+        text_mask:  Optional binary mask (255=text) from segmentation.
 
     Returns:
         Final inpainted image as a BGR numpy array.
-
-    Raises:
-        FileNotFoundError: If *image_path* does not exist.
-        RuntimeError:      If the image cannot be decoded.
     """
     path = Path(image_path).resolve()
 
@@ -232,20 +229,31 @@ def inpaint_all_bubbles(image_path: str, bubbles: list[dict]) -> np.ndarray:
         logger.error("Cannot decode image: %s", path.name)
         raise RuntimeError(f"Cannot decode image (corrupt or unsupported): {path.name}")
 
-    logger.info("Inpainting %d bubble(s) in %s", len(bubbles), path.name)
+    to_inpaint = [b for b in bubbles if not b.get("skip")]
 
-    for idx, bubble in enumerate(bubbles):
-        image = inpaint_bubble(image, bubble)
-        logger.info(
-            "Bubble #%d inpainted  (bbox=%s)",
-            idx, bubble.get("bbox", "?"),
-        )
+    if text_mask is not None and text_mask.shape[:2] == image.shape[:2]:
+        bubble_mask = np.zeros_like(text_mask)
+        for b in to_inpaint:
+            bx, by, bw, bh = b.get("bbox", (0, 0, 0, 0))
+            x1, y1 = max(bx, 0), max(by, 0)
+            x2, y2 = min(bx + bw, image.shape[1]), min(by + bh, image.shape[0])
+            bubble_mask[y1:y2, x1:x2] = 255
+        mask_uint8 = (text_mask.astype(np.uint8) & bubble_mask)
+        logger.info("Inpainting with segmentation mask in %s", path.name)
+        if mask_uint8.max() > 0:
+            image = cv2.inpaint(image, mask_uint8, _INPAINT_RADIUS, cv2.INPAINT_NS)
+            image = _cleanup_shadows(image, mask_uint8)
+    else:
+        logger.info("Inpainting %d bubble(s) in %s", len(bubbles), path.name)
+        for idx, bubble in enumerate(to_inpaint):
+            image = inpaint_bubble(image, bubble)
+            logger.info("Bubble #%d inpainted  (bbox=%s)", idx, bubble.get("bbox", "?"))
 
     debug_path = str(path.parent / "debug_inpainted.png")
     cv2.imwrite(debug_path, image)
     logger.info("Debug inpainted image saved → %s", debug_path)
 
-    logger.info("Inpainting complete: %d bubble(s) processed", len(bubbles))
+    logger.info("Inpainting complete: %d bubble(s) processed", len(to_inpaint))
     return image
 
 

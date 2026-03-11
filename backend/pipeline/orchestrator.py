@@ -14,6 +14,7 @@ from PIL import Image
 
 from pipeline.bubble_detector import detect_bubbles
 from pipeline.inpainter import inpaint_all_bubbles
+from pipeline.text_segmentation import segment_page_safe
 from pipeline.lang_detect import detect_source_language
 from pipeline.ocr import extract_all_bubbles
 from pipeline.text_renderer import render_all_bubbles
@@ -74,9 +75,15 @@ def _translate_page(
     page_name = Path(image_path).name
 
     if on_step:
+        on_step("Segmenting page")
+    logger.info("── [%s] Segmenting…", page_name)
+    img_for_seg = cv2.imread(image_path)
+    text_mask = segment_page_safe(img_for_seg) if img_for_seg is not None else None
+
+    if on_step:
         on_step("Detecting bubbles")
     logger.info("── [%s] Detecting bubbles…", page_name)
-    bubbles = detect_bubbles(image_path)
+    bubbles = detect_bubbles(image_path, text_mask=text_mask)
     logger.info("── [%s] %d bubble(s) detected", page_name, len(bubbles))
 
     if not bubbles:
@@ -115,7 +122,7 @@ def _translate_page(
     if on_step:
         on_step("Erasing Japanese text")
     logger.info("── [%s] Inpainting…", page_name)
-    cleaned = inpaint_all_bubbles(image_path, bubbles)
+    cleaned = inpaint_all_bubbles(image_path, bubbles, text_mask=text_mask)
 
     if on_step:
         on_step("Rendering translated text")

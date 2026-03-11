@@ -113,6 +113,7 @@ def _is_meaningful(text: str) -> bool:
 BBOX_PADDING = 5
 _MIN_CROP_DIM = 20
 _UPSCALE_THRESH = 64
+_CONF_FILTER_THRESH = 30  # Skip bubbles with Tesseract avg confidence below this
 
 
 def _preprocess_crop(crop: np.ndarray) -> np.ndarray:
@@ -132,7 +133,24 @@ def _preprocess_crop(crop: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(denoised, cv2.COLOR_GRAY2BGR)
 
 
-def extract_text_from_bubble(image: np.ndarray, bbox: list) -> str:
+def _tesseract_confidence(crop: np.ndarray) -> Optional[float]:
+    """Run Tesseract on crop, return mean confidence. None if Tesseract unavailable."""
+    try:
+        import pytesseract
+        data = pytesseract.image_to_data(
+            crop, lang="jpn_vert", config="--psm 5", output_type="dict"
+        )
+        confs = [c for c in data["conf"] if c != -1]
+        return float(np.mean(confs)) if confs else -1.0
+    except Exception:
+        return None
+
+
+def extract_text_from_bubble(
+    image: np.ndarray,
+    bbox: list,
+    conf_filter_thresh: Optional[float] = None,
+) -> str:
     """Run manga-ocr on a single bubble region.
 
     Applies preprocessing (upscale, CLAHE, denoise) before OCR for
@@ -166,6 +184,12 @@ def extract_text_from_bubble(image: np.ndarray, bbox: list) -> str:
         logger.warning("Empty crop for bbox %s — skipping", bbox)
         return ""
 
+    if conf_filter_thresh is not None:
+        conf = _tesseract_confidence(crop)
+        if conf is not None and conf >= 0 and conf < conf_filter_thresh:
+            logger.debug("Bbox %s: Tesseract conf %.1f < %.1f — skipping", bbox, conf, conf_filter_thresh)
+            return ""
+
     processed = _preprocess_crop(crop)
     pil_crop = Image.fromarray(cv2.cvtColor(processed, cv2.COLOR_BGR2RGB))
 
@@ -178,7 +202,11 @@ def extract_text_from_bubble(image: np.ndarray, bbox: list) -> str:
     return text.strip() if text else ""
 
 
-def extract_all_bubbles(image_path: str, bubbles: list[dict]) -> list[dict]:
+def extract_all_bubbles(
+    image_path: str,
+    bubbles: list[dict],
+    conf_filter_thresh: Optional[float] = _CONF_FILTER_THRESH,
+) -> list[dict]:
     """Run OCR on every bubble in a page and attach the recognised text.
 
     For each bubble dict (as produced by
@@ -215,7 +243,7 @@ def extract_all_bubbles(image_path: str, bubbles: list[dict]) -> list[dict]:
 
     for idx, bubble in enumerate(bubbles):
         bbox = bubble["bbox"]
-        text = extract_text_from_bubble(image, bbox)
+        text = extract_text_from_bubble(image, bbox, conf_filter_thresh=conf_filter_thresh)
 
         if not _is_meaningful(text):
             logger.debug("Bubble #%d: junk/empty text \"%s\" — skipped", idx, text)

@@ -6,7 +6,7 @@ Model: ogkalu/comic-speech-bubble-detector-yolov8m (Hugging Face)
 import logging
 import threading
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -144,11 +144,15 @@ def _save_debug_image(
     logger.debug("Debug image saved → %s", dest)
 
 
-def detect_bubbles(image_path: str) -> list[dict]:
-    """Detect speech bubbles using YOLOv8 inference.
+def detect_bubbles(image_path: str, text_mask: Optional[np.ndarray] = None) -> list[dict]:
+    """Detect speech bubbles using segmentation mask (primary) or YOLOv8 (fallback).
+
+    When text_mask is provided from segmentation, derives text boxes from the
+    mask (Whalefishin-style). Otherwise uses YOLO.
 
     Args:
         image_path: Path to a manga page image (PNG / JPG / WEBP).
+        text_mask: Optional binary mask (255=text) from segmentation.
 
     Returns:
         List of dicts sorted top-to-bottom, left-to-right.  Each dict has:
@@ -177,6 +181,16 @@ def detect_bubbles(image_path: str) -> list[dict]:
     img_h, img_w = img.shape[:2]
     img_area = img_h * img_w
     min_area = img_area * _MIN_AREA_RATIO
+
+    # Prefer segmentation-derived bubbles when mask available
+    if text_mask is not None and text_mask.shape[:2] == (img_h, img_w):
+        from pipeline.text_segmentation import mask_to_bubbles
+        mask_bubbles = mask_to_bubbles(text_mask)
+        if mask_bubbles:
+            debug_path = str(path.parent / "debug_bubbles.png")
+            _save_debug_image(img, mask_bubbles, debug_path)
+            logger.info("detect_bubbles: %d from segmentation mask", len(mask_bubbles))
+            return mask_bubbles
 
     model = _get_model()
     results = model(str(path), conf=_CONF_THRESHOLD, verbose=False)
