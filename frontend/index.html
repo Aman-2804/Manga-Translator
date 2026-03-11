@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manga Translator</title>
+    <link rel="icon" type="image/jpeg" href="favicon.jpg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+    <h1>Manga Translator</h1>
+    <p class="subtitle">漫画翻訳</p>
+</header>
+
+<main>
+    <!-- Language selector (always visible) -->
+    <div class="lang-bar" id="lang-bar">
+        <div class="lang-bar__side">
+            <span class="lang-bar__fixed">Japanese</span>
+        </div>
+        <span class="lang-bar__arrow">&rarr;</span>
+        <div class="lang-bar__side">
+            <select id="target-lang" class="lang-bar__select">
+                <option value="en" selected>English</option>
+                <option value="fr">French</option>
+                <option value="es">Spanish</option>
+                <option value="zh-CN">Chinese (Simplified)</option>
+                <option value="ko">Korean</option>
+                <option value="pt">Portuguese</option>
+                <option value="de">German</option>
+                <option value="hi">Hindi</option>
+                <option value="ar">Arabic</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Upload -->
+    <section class="upload-section" id="upload-section">
+        <div class="drop-zone" id="drop-zone">
+            <div class="drop-zone__empty" id="drop-zone-empty">
+                <div class="drop-zone__icon">&#128444;</div>
+                <p class="drop-zone__title">Drop manga pages here</p>
+                <p class="drop-zone__hint">PNG, JPG, WEBP &mdash; or click to browse</p>
+            </div>
+            <div class="drop-zone__preview" id="drop-zone-preview" hidden>
+                <p class="drop-zone__title" id="drop-zone-title">1 page(s) selected</p>
+                <div class="drop-zone__images" id="drop-zone-images"></div>
+            </div>
+            <input type="file" id="file-input" multiple accept=".png,.jpg,.jpeg,.webp,.bmp,.tiff" hidden>
+        </div>
+        <div class="file-list" id="file-list" hidden></div>
+        <button class="btn btn--primary" id="translate-btn" disabled>Translate</button>
+    </section>
+
+    <!-- Progress -->
+    <section class="progress-section" id="progress-section" hidden>
+        <div class="progress-preview" id="progress-preview"></div>
+        <div class="progress-info">
+            <span id="progress-label">Preparing…</span>
+            <span id="progress-pct">0%</span>
+        </div>
+        <div class="progress-bar">
+            <div class="progress-bar__fill" id="progress-fill"></div>
+        </div>
+    </section>
+
+    <!-- Results -->
+    <section class="results-section" id="results-section" hidden>
+        <div class="results-header">
+            <button class="btn btn--outline" id="new-translation-btn">New Translation</button>
+            <div class="results-header__actions">
+                <button class="btn btn--primary btn--retranslate" id="retranslate-btn">Translate</button>
+                <button class="btn btn--accent" id="download-all-btn">Download PDF</button>
+            </div>
+        </div>
+
+        <!-- Sync-scroll comparison view -->
+        <div class="compare-view" id="compare-view">
+            <div class="compare-panel" id="compare-panel-left">
+                <div class="compare-panel__header">Original</div>
+                <div class="compare-panel__scroll" id="compare-scroll-left"></div>
+            </div>
+            <div class="compare-panel" id="compare-panel-right">
+                <div class="compare-panel__header">Translated</div>
+                <div class="compare-panel__scroll" id="compare-scroll-right"></div>
+            </div>
+        </div>
+    </section>
+</main>
+
+<!-- Toast -->
+<div class="toast-container" id="toast-container"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

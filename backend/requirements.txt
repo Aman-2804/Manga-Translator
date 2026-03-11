@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+python-multipart
+manga-ocr
+opencv-python
+Pillow
+numpy
+deep-translator
+torch
+requests
+ultralytics
+huggingface_hub
+anthropic
+langdetect
