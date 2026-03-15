@@ -343,22 +343,32 @@ def render_text_on_bubble(image: np.ndarray, bubble: dict) -> np.ndarray:
     bbox = bubble["bbox"]
     bx, by, bw, bh = bbox
 
-    is_tall = bh > bw * _TALL_ASPECT
+    # Find the actual white interior of the bubble (oval, not full rectangle)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray_crop = gray[by:by + bh, bx:bx + bw]
+    _, cx_local, cy_local, top_y, bot_y, left_x, right_x = _analyze_white_interior(gray_crop)
 
-    font, lines = fit_text_in_bubble(en_text, bbox)
+    interior_w = max(right_x - left_x, bw // 2)
+    interior_h = max(bot_y - top_y, bh // 2)
+
+    is_tall = interior_h > interior_w * _TALL_ASPECT
+
+    # Fit text to the white interior dimensions, not the full bbox rectangle
+    font, lines = fit_text_in_bubble(en_text, [0, 0, interior_w, interior_h])
     font_size = font.size if hasattr(font, "size") else _MIN_FONT_SIZE
     line_gap = _dynamic_line_gap(font_size, len(lines))
     if is_tall:
         line_gap = max(1, int(line_gap * _TALL_GAP_MULT))
 
-    margin_x = int(bw * _MIN_MARGIN_RATIO)
-    margin_y = int(bh * _MIN_MARGIN_RATIO)
+    margin_x = int(interior_w * _MIN_MARGIN_RATIO)
+    margin_y = int(interior_h * _MIN_MARGIN_RATIO)
 
     _, total_h, line_metrics = _measure_lines(font, lines, line_gap)
 
-    start_y_local = (bh - total_h) // 2
-    start_y_local = max(margin_y, start_y_local)
-    start_y_local = min(start_y_local, max(margin_y, bh - total_h - margin_y))
+    # Center the text block on the white interior centroid
+    start_y_local = cy_local - total_h // 2
+    start_y_local = max(top_y + margin_y, start_y_local)
+    start_y_local = min(bot_y - total_h - margin_y, start_y_local)
 
     pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(pil_img)
@@ -366,9 +376,10 @@ def render_text_on_bubble(image: np.ndarray, bubble: dict) -> np.ndarray:
     cursor_y_local = start_y_local
 
     for line, (lw, lh) in zip(lines, line_metrics):
-        tx = bx + (bw - lw) // 2
-        tx = max(tx, bx + margin_x)
-        tx = min(tx, bx + bw - lw - margin_x)
+        # Center each line on the interior centroid X, clamped to white extents
+        tx = bx + cx_local - lw // 2
+        tx = max(tx, bx + left_x + margin_x)
+        tx = min(tx, bx + right_x - lw - margin_x)
         ty = by + cursor_y_local
 
         sw = _stroke_for_size(font_size)
@@ -379,8 +390,9 @@ def render_text_on_bubble(image: np.ndarray, bubble: dict) -> np.ndarray:
         cursor_y_local += lh + line_gap
 
     logger.info(
-        "Bubble bbox=%s  font_size=%d  lines=%d  tall=%s  text=%r",
-        bbox, font_size, len(lines), is_tall, en_text,
+        "Bubble bbox=%s  interior=(%d,%d,%dx%d)  centroid=(%d,%d)  font_size=%d  lines=%d  tall=%s  text=%r",
+        bbox, left_x, top_y, interior_w, interior_h, cx_local, cy_local,
+        font_size, len(lines), is_tall, en_text,
     )
 
     return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
