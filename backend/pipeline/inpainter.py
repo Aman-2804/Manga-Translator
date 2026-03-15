@@ -16,9 +16,11 @@ _INPAINT_RADIUS = 20
 _DARK_THRESH = 120
 _TEXT_AREA_MAX_RATIO = 0.05
 _EDGE_MARGIN_PX = 4
-_DILATE_PX = 8
+_DILATE_PX = 12
 _SHADOW_THRESH = 230
 _FEATHER_KERNEL = 3
+_FLOOD_FILL_TOLERANCE = 15
+_WHITE_INTERIOR_THRESH = 235
 
 
 def _is_edge_contour(contour: np.ndarray, roi_w: int, roi_h: int) -> bool:
@@ -72,6 +74,48 @@ def _find_text_contours_in_roi(
     )
     contours_adaptive, _ = cv2.findContours(dark_adaptive, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     return _filter_text_contours(contours_adaptive, roi_w, roi_h)
+
+
+def _force_white_interior(image: np.ndarray, bubbles: list) -> np.ndarray:
+    """Flood-fill from the center of each bubble to force the interior clean white.
+
+    After inpainting there can be residual halftone dots or faint text strokes.
+    This finds the connected white region from the bubble center and paints it
+    pure white, eliminating any leftover artefacts without touching the art
+    outside the bubble.
+    """
+    result = image.copy()
+    gray = cv2.cvtColor(result, cv2.COLOR_BGR2GRAY) if result.ndim == 3 else result.copy()
+
+    for b in bubbles:
+        if b.get("skip"):
+            continue
+        bx, by, bw, bh = b.get("bbox", (0, 0, 0, 0))
+        x1, y1 = max(bx, 0), max(by, 0)
+        x2, y2 = min(bx + bw, result.shape[1]), min(by + bh, result.shape[0])
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        # Try multiple seed points (center, then upper/lower halves)
+        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+        seeds = [
+            (cx, cy),
+            (cx, y1 + (y2 - y1) // 3),
+            (cx, y1 + 2 * (y2 - y1) // 3),
+        ]
+
+        for sx, sy in seeds:
+            if gray[sy, sx] < _WHITE_INTERIOR_THRESH:
+                continue
+            roi = result[y1:y2, x1:x2].copy()
+            flood_mask = np.zeros((y2 - y1 + 2, x2 - x1 + 2), np.uint8)
+            tol = (_FLOOD_FILL_TOLERANCE,) * 3
+            cv2.floodFill(roi, flood_mask, (sx - x1, sy - y1), (255, 255, 255),
+                          loDiff=tol, upDiff=tol)
+            result[y1:y2, x1:x2] = roi
+            break  # one successful fill per bubble is enough
+
+    return result
 
 
 def _cleanup_shadows(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
@@ -248,6 +292,9 @@ def inpaint_all_bubbles(
         for idx, bubble in enumerate(to_inpaint):
             image = inpaint_bubble(image, bubble)
             logger.info("Bubble #%d inpainted  (bbox=%s)", idx, bubble.get("bbox", "?"))
+
+    # Final pass: flood-fill bubble interiors to remove any residual halftone/text
+    image = _force_white_interior(image, to_inpaint)
 
     debug_path = str(path.parent / "debug_inpainted.png")
     cv2.imwrite(debug_path, image)

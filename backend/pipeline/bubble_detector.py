@@ -182,16 +182,9 @@ def detect_bubbles(image_path: str, text_mask: Optional[np.ndarray] = None) -> l
     img_area = img_h * img_w
     min_area = img_area * _MIN_AREA_RATIO
 
-    # Prefer segmentation-derived bubbles when mask available
-    if text_mask is not None and text_mask.shape[:2] == (img_h, img_w):
-        from pipeline.text_segmentation import mask_to_bubbles
-        mask_bubbles = mask_to_bubbles(text_mask)
-        if mask_bubbles:
-            debug_path = str(path.parent / "debug_bubbles.png")
-            _save_debug_image(img, mask_bubbles, debug_path)
-            logger.info("detect_bubbles: %d from segmentation mask", len(mask_bubbles))
-            return mask_bubbles
-
+    # Always use YOLO for bubble detection — it's trained to find actual speech bubble
+    # shapes and gives proper bounding boxes for text placement and font sizing.
+    # The text_mask is used only for inpainting (precise text erasure), not detection.
     model = _get_model()
     results = model(str(path), conf=_CONF_THRESHOLD, verbose=False)
 
