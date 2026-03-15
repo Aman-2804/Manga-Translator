@@ -36,6 +36,32 @@ OUTPUT_DIR = Path("../outputs")
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif"}
 _PDF_MIME = "application/pdf"
 
+
+def _pdf_to_images(pdf_path: Path, out_dir: Path, start_idx: int = 1) -> int:
+    """Convert every page of a PDF to a PNG in out_dir.
+
+    Uses PyMuPDF (fitz) at 2× zoom (~144 DPI) which is sharp enough for
+    OCR without being excessively large.  Returns the number of pages saved.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError as exc:
+        raise RuntimeError(
+            "PyMuPDF is required for PDF uploads. Run: pip install pymupdf"
+        ) from exc
+
+    doc = fitz.open(str(pdf_path))
+    mat = fitz.Matrix(2.0, 2.0)  # 2× zoom
+    count = len(doc)
+    for i in range(count):
+        page = doc.load_page(i)
+        pix = page.get_pixmap(matrix=mat)
+        dest = out_dir / f"page_{start_idx + i:03d}.png"
+        pix.save(str(dest))
+    doc.close()
+    logger.info("PDF → %d page image(s) in %s", count, out_dir)
+    return count
+
 # ── In-memory job status store ───────────────────────────────────────────────
 
 job_status: Dict[str, dict] = {}
@@ -131,20 +157,29 @@ async def upload(files: List[UploadFile] = File(...)):
     job_dir.mkdir(parents=True, exist_ok=True)
 
     saved = 0
-    for idx, f in enumerate(files, start=1):
+    for f in files:
         ext = Path(f.filename).suffix.lower()
         content_type = f.content_type or ""
 
         if ext == ".pdf" or _PDF_MIME in content_type:
-            raise HTTPException(
-                status_code=400,
-                detail="PDF upload not supported. Please upload the individual page images.",
-            )
+            # Save the PDF temporarily, convert each page to a PNG, then delete it
+            tmp_pdf = job_dir / "upload_tmp.pdf"
+            with open(tmp_pdf, "wb") as fp:
+                shutil.copyfileobj(f.file, fp)
+            try:
+                page_count = _pdf_to_images(tmp_pdf, job_dir, start_idx=saved + 1)
+                saved += page_count
+            except RuntimeError as exc:
+                shutil.rmtree(job_dir, ignore_errors=True)
+                raise HTTPException(status_code=500, detail=str(exc))
+            finally:
+                tmp_pdf.unlink(missing_ok=True)
+            continue
 
         if ext not in _IMAGE_EXTS:
             continue
 
-        dest = job_dir / f"page_{idx:03d}{ext}"
+        dest = job_dir / f"page_{saved + 1:03d}{ext}"
         with open(dest, "wb") as fp:
             shutil.copyfileobj(f.file, fp)
         saved += 1
@@ -153,7 +188,7 @@ async def upload(files: List[UploadFile] = File(...)):
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(
             status_code=400,
-            detail="No valid image files found. Accepted formats: PNG, JPG, JPEG, WEBP, BMP, TIFF.",
+            detail="No valid files found. Accepted formats: PNG, JPG, JPEG, WEBP, BMP, TIFF, PDF.",
         )
 
     _init_job(job_id)

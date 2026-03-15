@@ -61,23 +61,51 @@ fileInput.addEventListener("change", () => {
   if (fileInput.files.length) handleFiles(fileInput.files);
 });
 
+function isPDF(file) {
+  if (file.type === "application/pdf") return true;
+  if (file.name.toLowerCase().endsWith(".pdf")) return true;
+  // Files with no extension and no image MIME type are treated as PDF
+  const hasImageType = file.type.startsWith("image/");
+  const hasKnownExt = /\.(png|jpe?g|webp|bmp|tiff?)$/i.test(file.name);
+  if (!hasImageType && !hasKnownExt) return true;
+  return false;
+}
+
 function handleFiles(files) {
   selectedFiles = Array.from(files);
-  originalUrls.forEach((u) => URL.revokeObjectURL(u));
-  originalUrls = selectedFiles.map((f) => URL.createObjectURL(f));
+  originalUrls.filter(Boolean).forEach((u) => URL.revokeObjectURL(u));
 
   if (selectedFiles.length === 0) return;
 
+  const hasPDF = selectedFiles.some(isPDF);
+
+  // Build originalUrls: null for PDFs (no client-side preview), blob URL for images
+  originalUrls = selectedFiles.map((f) => isPDF(f) ? null : URL.createObjectURL(f));
+
   dropZoneEmpty.hidden = true;
   dropZonePreview.hidden = false;
-  dropZoneTitle.textContent = `${selectedFiles.length} page(s) selected`;
   dropZoneImages.innerHTML = "";
-  originalUrls.forEach((url) => {
-    const img = document.createElement("img");
-    img.src = url;
-    img.alt = "Preview";
-    dropZoneImages.appendChild(img);
-  });
+
+  if (hasPDF) {
+    // PDF: show a document icon + filename instead of image thumbnails
+    const pdfFiles = selectedFiles.filter(isPDF);
+    dropZoneTitle.textContent = `${pdfFiles.map(f => f.name).join(", ")}`;
+    pdfFiles.forEach((f) => {
+      const div = document.createElement("div");
+      div.className = "pdf-preview-card";
+      div.innerHTML = `<span class="pdf-preview-card__icon">&#128196;</span><span class="pdf-preview-card__name">${f.name}</span>`;
+      dropZoneImages.appendChild(div);
+    });
+  } else {
+    dropZoneTitle.textContent = `${selectedFiles.length} page(s) selected`;
+    originalUrls.forEach((url) => {
+      if (!url) return;
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = "Preview";
+      dropZoneImages.appendChild(img);
+    });
+  }
 
   fileList.innerHTML = "";
   selectedFiles.forEach((f) => {
@@ -127,6 +155,7 @@ translateBtn.addEventListener("click", async () => {
     progressSection.hidden = false;
     progressPreview.innerHTML = "";
     originalUrls.forEach((url) => {
+      if (!url) return;
       const img = document.createElement("img");
       img.src = url;
       img.alt = "Translating…";
@@ -214,8 +243,10 @@ function populateCompareView(data) {
   scrollLeft.innerHTML = "";
   scrollRight.innerHTML = "";
 
+  const hasPDFUpload = originalUrls.every((u) => u === null);
+
   data.pages.forEach((pageUrl, i) => {
-    const originalSrc = originalUrls[i] || "";
+    const originalSrc = originalUrls[i] || null;
     const translatedSrc = `${API}${pageUrl}`;
 
     if (originalSrc) {
@@ -224,6 +255,12 @@ function populateCompareView(data) {
       img.alt = `Original page ${i + 1}`;
       img.loading = "lazy";
       scrollLeft.appendChild(img);
+    } else {
+      // PDF upload — no client-side original; show a placeholder
+      const ph = document.createElement("div");
+      ph.className = "pdf-original-placeholder";
+      ph.textContent = `Page ${i + 1}`;
+      scrollLeft.appendChild(ph);
     }
 
     const img2 = document.createElement("img");
@@ -305,6 +342,7 @@ retranslateBtn.addEventListener("click", async () => {
 
     progressPreview.innerHTML = "";
     originalUrls.forEach((url) => {
+      if (!url) return;
       const img = document.createElement("img");
       img.src = url;
       img.alt = "Translating…";
@@ -330,7 +368,7 @@ newTransBtn.addEventListener("click", () => {
   uploadSection.hidden = false;
 
   selectedFiles = [];
-  originalUrls.forEach((u) => URL.revokeObjectURL(u));
+  originalUrls.filter(Boolean).forEach((u) => URL.revokeObjectURL(u));
   originalUrls = [];
   jobId = null;
   scrollLeft.innerHTML = "";
