@@ -75,6 +75,7 @@ def _init_job(job_id: str, total_pages: int = 0) -> dict:
         "completed_pages": 0,
         "step_label": "",
         "pages": [],
+        "original_pages": [],
         "pdf": None,
         "failed": [],
         "error": None,
@@ -119,6 +120,9 @@ def _run_translation_job(
         entry["pages"] = [
             f"/download/{job_id}/{Path(p).name}" for p in result["pages"]
         ]
+        entry["original_pages"] = [
+            f"/download/{job_id}/{Path(p).name}" for p in result.get("original_pages", [])
+        ]
         entry["pdf"] = f"/download/{job_id}/translated.pdf"
         entry["failed"] = result["failed"]
 
@@ -161,28 +165,35 @@ async def upload(files: List[UploadFile] = File(...)):
         ext = Path(f.filename).suffix.lower()
         content_type = f.content_type or ""
 
-        if ext == ".pdf" or _PDF_MIME in content_type:
-            # Save the PDF temporarily, convert each page to a PNG, then delete it
-            tmp_pdf = job_dir / "upload_tmp.pdf"
-            with open(tmp_pdf, "wb") as fp:
-                shutil.copyfileobj(f.file, fp)
-            try:
-                page_count = _pdf_to_images(tmp_pdf, job_dir, start_idx=saved + 1)
-                saved += page_count
-            except RuntimeError as exc:
-                shutil.rmtree(job_dir, ignore_errors=True)
-                raise HTTPException(status_code=500, detail=str(exc))
-            finally:
-                tmp_pdf.unlink(missing_ok=True)
-            continue
+        looks_like_pdf = ext == ".pdf" or _PDF_MIME in content_type
+        looks_like_image = ext in _IMAGE_EXTS
 
-        if ext not in _IMAGE_EXTS:
-            continue
-
-        dest = job_dir / f"page_{saved + 1:03d}{ext}"
-        with open(dest, "wb") as fp:
+        # Save to a temp file so we can inspect / convert it
+        tmp_path = job_dir / f"upload_tmp_{saved}"
+        with open(tmp_path, "wb") as fp:
             shutil.copyfileobj(f.file, fp)
-        saved += 1
+
+        if looks_like_pdf or (not looks_like_image):
+            # Try to open as PDF (handles files with no extension / wrong MIME type)
+            try:
+                import fitz
+                page_count = _pdf_to_images(tmp_path, job_dir, start_idx=saved + 1)
+                saved += page_count
+                tmp_path.unlink(missing_ok=True)
+                continue
+            except Exception:
+                if looks_like_pdf:
+                    # Was explicitly a PDF but failed — surface the error
+                    tmp_path.unlink(missing_ok=True)
+                    raise HTTPException(status_code=400, detail=f"Could not read PDF: {f.filename}")
+                # Not a PDF — fall through to image handling below
+
+        if looks_like_image:
+            dest = job_dir / f"page_{saved + 1:03d}{ext}"
+            tmp_path.rename(dest)
+            saved += 1
+        else:
+            tmp_path.unlink(missing_ok=True)
 
     if saved == 0:
         shutil.rmtree(job_dir, ignore_errors=True)
@@ -262,6 +273,7 @@ async def status(job_id: str):
         "completed_pages": entry["completed_pages"],
         "step_label": entry.get("step_label", ""),
         "pages": entry["pages"],
+        "original_pages": entry.get("original_pages", []),
         "pdf": entry["pdf"],
         "failed": entry["failed"],
         "error": entry["error"],

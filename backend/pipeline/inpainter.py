@@ -76,6 +76,25 @@ def _find_text_contours_in_roi(
     return _filter_text_contours(contours_adaptive, roi_w, roi_h)
 
 
+def _find_light_contours_in_roi(gray_roi: np.ndarray) -> list:
+    """Find bright contours that look like white text on a dark background."""
+    roi_h, roi_w = gray_roi.shape[:2]
+    bbox_area = roi_h * roi_w
+
+    light_mask = (gray_roi > 200).astype(np.uint8) * 255
+    contours, _ = cv2.findContours(light_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    text_contours = []
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < 2:
+            continue
+        if area > bbox_area * _TEXT_AREA_MAX_RATIO:
+            continue
+        text_contours.append(c)
+    return text_contours
+
+
 def _force_white_interior(image: np.ndarray, bubbles: list) -> np.ndarray:
     """Flood-fill from the center of each bubble to force the interior clean white.
 
@@ -104,13 +123,17 @@ def _force_white_interior(image: np.ndarray, bubbles: list) -> np.ndarray:
             (cx, y1 + 2 * (y2 - y1) // 3),
         ]
 
+        is_dark = b.get("dark_bubble", False)
+        fill_color = (0, 0, 0) if is_dark else (255, 255, 255)
+        seed_check = lambda v: v < 80 if is_dark else v >= _WHITE_INTERIOR_THRESH
+
         for sx, sy in seeds:
-            if gray[sy, sx] < _WHITE_INTERIOR_THRESH:
+            if not seed_check(gray[sy, sx]):
                 continue
             roi = result[y1:y2, x1:x2].copy()
             flood_mask = np.zeros((y2 - y1 + 2, x2 - x1 + 2), np.uint8)
             tol = (_FLOOD_FILL_TOLERANCE,) * 3
-            cv2.floodFill(roi, flood_mask, (sx - x1, sy - y1), (255, 255, 255),
+            cv2.floodFill(roi, flood_mask, (sx - x1, sy - y1), fill_color,
                           loDiff=tol, upDiff=tol)
             result[y1:y2, x1:x2] = roi
             break  # one successful fill per bubble is enough
@@ -290,8 +313,25 @@ def inpaint_all_bubbles(
     else:
         logger.info("Inpainting %d bubble(s) in %s", len(bubbles), path.name)
         for idx, bubble in enumerate(to_inpaint):
-            image = inpaint_bubble(image, bubble)
-            logger.info("Bubble #%d inpainted  (bbox=%s)", idx, bubble.get("bbox", "?"))
+            is_dark = bubble.get("dark_bubble", False)
+            if is_dark:
+                # White text on black: find bright contours, inpaint with black neighbors
+                bx, by, bw, bh = bubble["bbox"]
+                x1, y1 = max(bx, 0), max(by, 0)
+                x2, y2 = min(bx + bw, image.shape[1]), min(by + bh, image.shape[0])
+                gray_roi = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)[y1:y2, x1:x2]
+                light_contours = _find_light_contours_in_roi(gray_roi)
+                roi_mask = np.zeros(gray_roi.shape, dtype=np.uint8)
+                cv2.drawContours(roi_mask, light_contours, -1, 255, thickness=cv2.FILLED)
+                kernel = np.ones((_DILATE_PX, _DILATE_PX), np.uint8)
+                roi_mask = cv2.dilate(roi_mask, kernel, iterations=1)
+                full_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+                full_mask[y1:y2, x1:x2] = roi_mask
+                if full_mask.max() > 0:
+                    image = cv2.inpaint(image, full_mask, _INPAINT_RADIUS, cv2.INPAINT_NS)
+            else:
+                image = inpaint_bubble(image, bubble)
+            logger.info("Bubble #%d inpainted  (dark=%s bbox=%s)", idx, is_dark, bubble.get("bbox", "?"))
 
     # Final pass: flood-fill bubble interiors to remove any residual halftone/text
     image = _force_white_interior(image, to_inpaint)

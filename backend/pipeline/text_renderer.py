@@ -343,17 +343,24 @@ def render_text_on_bubble(image: np.ndarray, bubble: dict) -> np.ndarray:
     bbox = bubble["bbox"]
     bx, by, bw, bh = bbox
 
-    # Find the actual white interior of the bubble (oval, not full rectangle)
+    is_dark = bubble.get("dark_bubble", False)
+
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray_crop = gray[by:by + bh, bx:bx + bw]
-    _, cx_local, cy_local, top_y, bot_y, left_x, right_x = _analyze_white_interior(gray_crop)
 
-    interior_w = max(right_x - left_x, bw // 2)
-    interior_h = max(bot_y - top_y, bh // 2)
+    if is_dark:
+        # Dark narrator box: center on the full bbox (whole interior is black)
+        cx_local, cy_local = bw // 2, bh // 2
+        interior_w, interior_h = bw, bh
+        left_x, top_y, right_x, bot_y = 0, 0, bw, bh
+    else:
+        # White speech bubble: find the actual white oval interior
+        _, cx_local, cy_local, top_y, bot_y, left_x, right_x = _analyze_white_interior(gray_crop)
+        interior_w = max(right_x - left_x, bw // 2)
+        interior_h = max(bot_y - top_y, bh // 2)
 
     is_tall = interior_h > interior_w * _TALL_ASPECT
 
-    # Fit text to the white interior dimensions, not the full bbox rectangle
     font, lines = fit_text_in_bubble(en_text, [0, 0, interior_w, interior_h])
     font_size = font.size if hasattr(font, "size") else _MIN_FONT_SIZE
     line_gap = _dynamic_line_gap(font_size, len(lines))
@@ -365,7 +372,6 @@ def render_text_on_bubble(image: np.ndarray, bubble: dict) -> np.ndarray:
 
     _, total_h, line_metrics = _measure_lines(font, lines, line_gap)
 
-    # Center the text block on the white interior centroid
     start_y_local = cy_local - total_h // 2
     start_y_local = max(top_y + margin_y, start_y_local)
     start_y_local = min(bot_y - total_h - margin_y, start_y_local)
@@ -375,8 +381,11 @@ def render_text_on_bubble(image: np.ndarray, bubble: dict) -> np.ndarray:
 
     cursor_y_local = start_y_local
 
+    # Dark box → white text with black stroke; light bubble → black text with white stroke
+    text_fill = "white" if is_dark else "black"
+    stroke_fill = "black" if is_dark else "white"
+
     for line, (lw, lh) in zip(lines, line_metrics):
-        # Center each line on the interior centroid X, clamped to white extents
         tx = bx + cx_local - lw // 2
         tx = max(tx, bx + left_x + margin_x)
         tx = min(tx, bx + right_x - lw - margin_x)
@@ -385,14 +394,14 @@ def render_text_on_bubble(image: np.ndarray, bubble: dict) -> np.ndarray:
         sw = _stroke_for_size(font_size)
         draw.text(
             (tx, ty), line, font=font,
-            fill="black", stroke_width=sw, stroke_fill="white",
+            fill=text_fill, stroke_width=sw, stroke_fill=stroke_fill,
         )
         cursor_y_local += lh + line_gap
 
     logger.info(
-        "Bubble bbox=%s  interior=(%d,%d,%dx%d)  centroid=(%d,%d)  font_size=%d  lines=%d  tall=%s  text=%r",
-        bbox, left_x, top_y, interior_w, interior_h, cx_local, cy_local,
-        font_size, len(lines), is_tall, en_text,
+        "Bubble bbox=%s  dark=%s  interior=(%d,%d,%dx%d)  centroid=(%d,%d)  font_size=%d  lines=%d  text=%r",
+        bbox, is_dark, left_x, top_y, interior_w, interior_h, cx_local, cy_local,
+        font_size, len(lines), en_text,
     )
 
     return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)

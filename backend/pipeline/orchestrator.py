@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List
 
 import cv2
+import numpy as np
 from PIL import Image
 
 from pipeline.bubble_detector import detect_bubbles
@@ -52,6 +53,34 @@ def _collect_page_images(input_path: str) -> List[str]:
     raise ValueError(f"Unsupported input: {p} (expected a folder of images or a single image file)")
 
 
+def _tag_dark_bubbles(image: np.ndarray, bubbles: list) -> None:
+    """Set ``dark_bubble=True`` on each bubble whose interior is predominantly dark.
+
+    Samples the inner 75% of the bubble bounding box to avoid border pixels
+    and checks mean brightness.  Dark narrator boxes typically have mean < 80.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape[:2]
+
+    for b in bubbles:
+        bx, by, bw, bh = b["bbox"]
+        x1, y1 = max(bx, 0), max(by, 0)
+        x2, y2 = min(bx + bw, w), min(by + bh, h)
+        roi = gray[y1:y2, x1:x2]
+
+        # Shrink inward by ~12.5% on each side to avoid bubble border pixels
+        mx = max(1, roi.shape[1] // 8)
+        my = max(1, roi.shape[0] // 8)
+        inner = roi[my:roi.shape[0] - my, mx:roi.shape[1] - mx]
+        if inner.size == 0:
+            inner = roi
+
+        mean_brightness = float(np.mean(inner))
+        b["dark_bubble"] = mean_brightness < 80
+        if b["dark_bubble"]:
+            logger.info("Dark bubble detected: bbox=%s  brightness=%.1f", b["bbox"], mean_brightness)
+
+
 def _translate_page(
     image_path: str,
     output_path: str,
@@ -85,6 +114,10 @@ def _translate_page(
     logger.info("── [%s] Detecting bubbles…", page_name)
     bubbles = detect_bubbles(image_path, text_mask=text_mask)
     logger.info("── [%s] %d bubble(s) detected", page_name, len(bubbles))
+
+    # Tag each bubble as dark (black narrator box) or light (white speech bubble)
+    if img_for_seg is not None:
+        _tag_dark_bubbles(img_for_seg, bubbles)
 
     if not bubbles:
         logger.warning("── [%s] No bubbles found — copying original", page_name)
@@ -206,6 +239,7 @@ def run_pipeline(
     logger.info("Found %d page image(s)", total)
 
     translated_pages: List[str] = []
+    original_pages: List[str] = []
     failed_pages: List[str] = []
     detected_lang_ref: List[str] = []
 
@@ -213,6 +247,13 @@ def run_pipeline(
         page_name = Path(img_path).name
         out_name = f"translated_page_{idx:03d}.png"
         out_path = str(out / out_name)
+
+        # Save a copy of the original page so the frontend can show it
+        orig_out = str(out / f"original_page_{idx:03d}.png")
+        img_orig = cv2.imread(img_path)
+        if img_orig is not None:
+            cv2.imwrite(orig_out, img_orig)
+            original_pages.append(orig_out)
 
         logger.info("━━ Page %d/%d: %s ━━", idx, total, page_name)
 
@@ -266,6 +307,7 @@ def run_pipeline(
 
     return {
         "pages": translated_pages,
+        "original_pages": original_pages,
         "pdf": str(Path(pdf_path).resolve()),
         "failed": failed_pages,
         "elapsed": elapsed,

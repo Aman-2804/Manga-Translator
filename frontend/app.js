@@ -246,7 +246,12 @@ function populateCompareView(data) {
   const hasPDFUpload = originalUrls.every((u) => u === null);
 
   data.pages.forEach((pageUrl, i) => {
-    const originalSrc = originalUrls[i] || null;
+    // Prefer client-side blob URL, then server-side original, then placeholder
+    const clientSrc = originalUrls[i] || null;
+    const serverSrc = data.original_pages && data.original_pages[i]
+      ? `${API}${data.original_pages[i]}`
+      : null;
+    const originalSrc = clientSrc || serverSrc;
     const translatedSrc = `${API}${pageUrl}`;
 
     if (originalSrc) {
@@ -256,7 +261,6 @@ function populateCompareView(data) {
       img.loading = "lazy";
       scrollLeft.appendChild(img);
     } else {
-      // PDF upload — no client-side original; show a placeholder
       const ph = document.createElement("div");
       ph.className = "pdf-original-placeholder";
       ph.textContent = `Page ${i + 1}`;
