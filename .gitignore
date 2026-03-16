@@ -1,0 +1,8 @@
+uploads/
+outputs/
+README.md
+__pycache__/
+.env
+*.pyc
+venv/
+.venv/
