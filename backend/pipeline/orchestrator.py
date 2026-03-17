@@ -13,11 +13,11 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from pipeline.bubble_detector import detect_bubbles
+from pipeline.bubble_detector import detect_bubbles, unload_model as unload_bubble_detector
 from pipeline.inpainter import inpaint_all_bubbles
-from pipeline.text_segmentation import segment_page_safe
+from pipeline.text_segmentation import segment_page_safe, unload_segmentation_model
 from pipeline.lang_detect import detect_source_language
-from pipeline.ocr import extract_all_bubbles
+from pipeline.ocr import extract_all_bubbles, unload_model as unload_ocr
 from pipeline.text_renderer import render_all_bubbles
 from pipeline.translator import translate_page_bubbles_contextually
 
@@ -108,6 +108,7 @@ def _translate_page(
     logger.info("── [%s] Segmenting…", page_name)
     img_for_seg = cv2.imread(image_path)
     text_mask = segment_page_safe(img_for_seg) if img_for_seg is not None else None
+    unload_segmentation_model()
 
     if on_step:
         on_step("Detecting bubbles")
@@ -118,6 +119,7 @@ def _translate_page(
     # Tag each bubble as dark (black narrator box) or light (white speech bubble)
     if img_for_seg is not None:
         _tag_dark_bubbles(img_for_seg, bubbles)
+    unload_bubble_detector()
 
     if not bubbles:
         logger.warning("── [%s] No bubbles found — copying original", page_name)
@@ -130,6 +132,7 @@ def _translate_page(
     logger.info("── [%s] Running OCR…", page_name)
     bubbles = extract_all_bubbles(image_path, bubbles)
     logger.info("── [%s] %d bubble(s) with text", page_name, len(bubbles))
+    unload_ocr()
 
     if not bubbles:
         logger.warning("── [%s] OCR found no text — copying original", page_name)

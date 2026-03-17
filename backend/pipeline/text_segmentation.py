@@ -62,6 +62,17 @@ _MODEL_CACHE = None
 _MODEL_PATH: Optional[Path] = None
 
 
+def unload_segmentation_model() -> None:
+    """Release the segmentation model from memory."""
+    global _MODEL_CACHE
+    if _MODEL_CACHE is not None:
+        import gc
+        del _MODEL_CACHE
+        _MODEL_CACHE = None
+        gc.collect()
+        logger.info("Segmentation model unloaded")
+
+
 def _get_model_path() -> Path:
     global _MODEL_PATH
     if _MODEL_PATH is None:

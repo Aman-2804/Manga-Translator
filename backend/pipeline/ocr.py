@@ -26,6 +26,18 @@ _model_lock = threading.Lock()
 _model_init_error: Optional[Exception] = None
 
 
+def unload_model() -> None:
+    """Release the manga-ocr model from memory."""
+    global _model_instance, _model_init_error
+    if _model_instance is not None:
+        import gc
+        del _model_instance
+        _model_instance = None
+        _model_init_error = None
+        gc.collect()
+        logger.info("manga-ocr model unloaded")
+
+
 def _get_model():
     """Return the shared MangaOcr instance, creating it on first call.
 

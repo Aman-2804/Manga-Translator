@@ -28,6 +28,17 @@ _model = None
 _model_lock = threading.Lock()
 
 
+def unload_model() -> None:
+    """Release the YOLO model from memory."""
+    global _model
+    if _model is not None:
+        import gc
+        del _model
+        _model = None
+        gc.collect()
+        logger.info("Bubble detector model unloaded")
+
+
 def _get_model():
     """Download (once) and return the cached YOLO model instance."""
     global _model
